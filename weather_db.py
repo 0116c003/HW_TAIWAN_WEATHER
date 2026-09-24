@@ -14,6 +14,13 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 
+# Windows 終端機 UTF-8 輸出支援
+if sys.platform.startswith('win'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 # 中央氣象署 API 金鑰與端點
 CWA_API_KEY = "CWA-F5CD0E42-DE70-4BDD-A2E6-077A2FF67969"
 CWA_API_URL = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={CWA_API_KEY}&format=JSON"
