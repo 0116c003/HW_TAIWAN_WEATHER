@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 Taiwan Weather Project - Database Manager
-符合微課程 Step 8, 9, 10, 12 要求：
-- 建立 SQLite 資料庫 (data/data.db)
-- 設計 TemperatureForecasts 資料表 (id, regionName, dataDate, minT, maxT)
-- 支援 UNIQUE(regionName, dataDate) 避免重複插入
-- 提供 SQL 查詢與驗證介面
+符合微課程 Step 8, 9, 10, 12 要求，並擴充支援精細至小時的預報：
+- TemperatureForecasts: 逐日最高最低溫預報 (7 天)
+- HourlyForecasts: 逐小時/逐3小時高精細預報 (時間軸絲滑滑動專用)
 """
 
 import sqlite3
@@ -28,19 +26,14 @@ def get_db_connection(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
 
 def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
     """
-    初始化資料表 (Step 8 & 9)
-    資料庫名稱：data.db
-    資料表名稱：TemperatureForecasts
-    欄位規格：
-      - id: INTEGER PRIMARY KEY AUTOINCREMENT
-      - regionName: TEXT (地區名稱，如：中部地區、北部地區...)
-      - dataDate: TEXT (預報日期，如：2026-09-24)
-      - minT: REAL (最低氣溫)
-      - maxT: REAL (最高氣溫)
-      - UNIQUE(regionName, dataDate) (重複執行不重複插入)
+    初始化資料表：
+    1. TemperatureForecasts (逐日預報)
+    2. HourlyForecasts (逐時精細預報)
     """
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
+    
+    # 逐日氣溫表 (Step 8 & 9)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS TemperatureForecasts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,37 +44,56 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
             UNIQUE(regionName, dataDate)
         );
     """)
+
+    # 逐時高解析氣象表 (用於絲滑時間軸)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS HourlyForecasts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            regionName TEXT NOT NULL,
+            dataTime TEXT NOT NULL,
+            temp REAL NOT NULL,
+            apparentTemp REAL,
+            humidity REAL,
+            wx TEXT,
+            UNIQUE(regionName, dataTime)
+        );
+    """)
+    
     conn.commit()
     conn.close()
 
 
 def save_forecasts(records: List[Dict[str, Any]], db_path: str = DEFAULT_DB_PATH) -> int:
-    """
-    儲存氣象預報資料至資料庫 (Step 8 & 20)
-    使用 INSERT OR REPLACE 避免重複插入
-    """
+    """儲存逐日氣溫預報資料 (INSERT OR REPLACE)"""
     init_db(db_path)
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
-    inserted_count = 0
-
     for rec in records:
         cursor.execute("""
             INSERT OR REPLACE INTO TemperatureForecasts (regionName, dataDate, minT, maxT)
             VALUES (?, ?, ?, ?)
         """, (rec['regionName'], rec['dataDate'], float(rec['minT']), float(rec['maxT'])))
-        inserted_count += 1
-
     conn.commit()
     conn.close()
-    return inserted_count
+    return len(records)
+
+
+def save_hourly_forecasts(records: List[tuple], db_path: str = DEFAULT_DB_PATH) -> int:
+    """儲存逐時氣候資料 (INSERT OR REPLACE)"""
+    init_db(db_path)
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.executemany("""
+        INSERT OR REPLACE INTO HourlyForecasts (regionName, dataTime, temp, apparentTemp, humidity, wx)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, records)
+    conn.commit()
+    conn.close()
+    return len(records)
 
 
 def get_distinct_regions(db_path: str = DEFAULT_DB_PATH) -> List[str]:
-    """
-    查詢所有不重複的地區名稱 (Step 10 & 13)
-    對應 SQL: SELECT DISTINCT regionName FROM TemperatureForecasts;
-    """
+    """查詢所有不重複的地區名稱"""
     init_db(db_path)
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
@@ -89,7 +101,6 @@ def get_distinct_regions(db_path: str = DEFAULT_DB_PATH) -> List[str]:
     rows = cursor.fetchall()
     conn.close()
     
-    # 按照 6 大主要地區優先排序
     priority_order = ["北部地區", "中部地區", "南部地區", "東北部地區", "東部地區", "東南部地區"]
     all_regions = [r[0] for r in rows]
     
@@ -99,10 +110,7 @@ def get_distinct_regions(db_path: str = DEFAULT_DB_PATH) -> List[str]:
 
 
 def get_forecast_by_region(region_name: str, db_path: str = DEFAULT_DB_PATH) -> pd.DataFrame:
-    """
-    查詢特定地區的氣象預報資料 (Step 10 & 12)
-    對應 SQL: SELECT * FROM TemperatureForecasts WHERE regionName = '中部地區' ORDER BY dataDate ASC;
-    """
+    """查詢特定地區的逐日預報"""
     init_db(db_path)
     conn = get_db_connection(db_path)
     query = """
@@ -116,19 +124,32 @@ def get_forecast_by_region(region_name: str, db_path: str = DEFAULT_DB_PATH) -> 
     return df
 
 
-def get_forecast_by_date(data_date: str, db_path: str = DEFAULT_DB_PATH) -> pd.DataFrame:
-    """
-    查詢特定日期的全台各地區預報 (用於 Step 18 互動式地圖)
-    """
+def get_hourly_forecast_by_region(region_name: str, db_path: str = DEFAULT_DB_PATH) -> pd.DataFrame:
+    """查詢特定地區的逐時高解析預報"""
     init_db(db_path)
     conn = get_db_connection(db_path)
     query = """
-        SELECT regionName, minT, maxT 
-        FROM TemperatureForecasts 
-        WHERE dataDate = ? 
+        SELECT dataTime, temp, apparentTemp, humidity, wx 
+        FROM HourlyForecasts 
+        WHERE regionName = ? 
+        ORDER BY dataTime ASC
+    """
+    df = pd.read_sql_query(query, conn, params=(region_name,))
+    conn.close()
+    return df
+
+
+def get_hourly_forecast_by_time(data_time: str, db_path: str = DEFAULT_DB_PATH) -> pd.DataFrame:
+    """查詢特定時間點全台所有縣市的即時預報"""
+    init_db(db_path)
+    conn = get_db_connection(db_path)
+    query = """
+        SELECT regionName, temp, apparentTemp, humidity, wx 
+        FROM HourlyForecasts 
+        WHERE dataTime = ? 
         ORDER BY regionName ASC
     """
-    df = pd.read_sql_query(query, conn, params=(data_date,))
+    df = pd.read_sql_query(query, conn, params=(data_time,))
     conn.close()
     return df
 
@@ -139,6 +160,17 @@ def get_all_dates(db_path: str = DEFAULT_DB_PATH) -> List[str]:
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("SELECT DISTINCT dataDate FROM TemperatureForecasts ORDER BY dataDate ASC;")
+    rows = cursor.fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
+def get_all_hourly_times(db_path: str = DEFAULT_DB_PATH) -> List[str]:
+    """取得所有逐時時間點 (用於絲滑時間軸)"""
+    init_db(db_path)
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT DISTINCT dataTime FROM HourlyForecasts ORDER BY dataTime ASC;")
     rows = cursor.fetchall()
     conn.close()
     return [r[0] for r in rows]

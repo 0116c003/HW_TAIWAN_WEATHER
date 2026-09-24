@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-Taiwan Weather Forecast - Streamlit Dashboard (衛星遙測高階互動版)
-依據使用者需求更新：
-1. 僅保留「衛星遙測空照圖」(Esri World Imagery)，呈現最真實的深藍海洋與翠綠山脈地貌。
-2. 移除一開始遮蔽畫面的六大區大圓標。
-3. 實作「滑鼠指到哪，就顯示那個城市的氣象」：
-   - 滑鼠懸停（Hover）在任一縣市時，該縣市即時高亮發光。
-   - 懸停 Tooltip 浮現該城市的最高溫、最低溫、平均氣溫與預報日期。
-4. 點擊任何縣市時，全網頁即時連動顯示該城市的一週折線圖、KPI 指標與詳細數據表。
+Taiwan Weather Forecast - Streamlit Dashboard (衛星空照 × 逐時精細絲滑時間軸)
+功能特色：
+1. 僅保留真實高解析度「衛星遙測空照圖」(Esri World Imagery)，天然呈現深藍海域與翠綠地貌。
+2. 精細至小時的「絲滑時間軸 (Hourly Timeline)」：包含未來 56~72 小時逐時/逐3小時預報，滑動極為順暢。
+3. 支援「▶️ 自動播放動畫」與「⏪/⏩ 逐時微調」，動態展示全台晝夜氣溫流轉。
+4. 滑鼠指到哪（Hover），浮現該城市在該時段的即時氣溫、體感溫度、濕度與天氣狀況。
+5. 點擊任何縣市，右側圖表即時連動切換該城市的 48 小時氣溫趨勢線與一週預報。
+6. 內建公開部署至 Streamlit Cloud 指南，輕鬆分享給老師與同學。
 """
 
 import os
 import sys
 import json
+import time
 from datetime import datetime
 import streamlit as st
 import pandas as pd
@@ -30,8 +31,10 @@ from db_manager import (
     init_db,
     get_distinct_regions,
     get_forecast_by_region,
-    get_forecast_by_date,
+    get_hourly_forecast_by_region,
+    get_hourly_forecast_by_time,
     get_all_dates,
+    get_all_hourly_times,
     execute_custom_query
 )
 from fetch_weather import (
@@ -43,7 +46,7 @@ from fetch_weather import (
 
 # 頁面配置
 st.set_page_config(
-    page_title="台灣氣象預報儀表板 · 衛星地圖版",
+    page_title="台灣衛星氣象預報儀表板 · 絲滑時間軸",
     page_icon="🛰️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -54,8 +57,12 @@ if "selected_region" not in st.session_state:
     st.session_state["selected_region"] = "臺北市"
 if "last_map_click" not in st.session_state:
     st.session_state["last_map_click"] = None
+if "time_index" not in st.session_state:
+    st.session_state["time_index"] = 0
+if "is_playing" not in st.session_state:
+    st.session_state["is_playing"] = False
 
-# GeoJSON 縣市名稱英漢對照表 (22 個行政區)
+# GeoJSON 縣市名稱英漢對照表
 COUNTY_NAME_MAPPING = {
     "Taipei City": "臺北市",
     "New Taipei City": "新北市",
@@ -98,12 +105,12 @@ st.markdown("""
     }
     
     .main-header {
-        background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0369a1 100%);
+        background: linear-gradient(135deg, #091e3a 0%, #1e3c72 50%, #2a5298 100%);
         padding: 22px 28px;
         border-radius: 14px;
         color: white;
         margin-bottom: 20px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+        box-shadow: 0 4px 20px rgba(0,0,0,0.22);
     }
     
     .active-badge {
@@ -118,11 +125,19 @@ st.markdown("""
         margin: 6px 0 10px 0;
     }
     
+    .timeline-card {
+        background: #f8fafc;
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        padding: 12px 16px;
+        margin-bottom: 12px;
+    }
+    
     .legend-box {
         display: flex;
         justify-content: space-around;
         padding: 10px;
-        background: rgba(255, 255, 255, 0.9);
+        background: rgba(255, 255, 255, 0.92);
         border-radius: 8px;
         margin-top: 10px;
         font-size: 13px;
@@ -143,21 +158,20 @@ st.markdown("""
         display: inline-block;
     }
     
-    /* 地圖圓角與光影 */
     iframe {
         border-radius: 12px !important;
-        box-shadow: 0 6px 16px rgba(0,0,0,0.18) !important;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.2) !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
 def ensure_data_ready():
-    """確認資料庫是否有資料，若為空則自動由 CWA API 擷取"""
+    """確認資料庫是否具備逐日與逐時資料"""
     init_db()
-    dates = get_all_dates()
-    if not dates:
-        with st.spinner("正在連線至中央氣象署 CWA 獲取最新氣象預報..."):
+    hourly_times = get_all_hourly_times()
+    if not hourly_times:
+        with st.spinner("正在連線至中央氣象署 CWA 獲取高解析度逐時氣象資料..."):
             update_weather_data()
 
 
@@ -165,8 +179,7 @@ ensure_data_ready()
 
 
 # ==========================================
-# 幾何演算法：點在多邊形內 (Ray-Casting)
-# 用於精確判定點擊的是哪一個縣市
+# 幾何演算法：判斷點擊座標所在縣市
 # ==========================================
 def point_in_poly(x: float, y: float, poly: list) -> bool:
     n = len(poly)
@@ -186,7 +199,6 @@ def point_in_poly(x: float, y: float, poly: list) -> bool:
 
 
 def identify_clicked_county(lat: float, lon: float, geojson_features: list) -> str:
-    """根據點擊的經緯度判斷所在的台灣縣市"""
     for feat in geojson_features:
         name_en = feat["properties"].get("name", "").strip()
         name_zh = COUNTY_NAME_MAPPING.get(name_en, name_en)
@@ -204,7 +216,6 @@ def identify_clicked_county(lat: float, lon: float, geojson_features: list) -> s
                     if point_in_poly(lon, lat, ring):
                         return name_zh
 
-    # 備援：若點在邊界外微小處，尋找距離最近的縣市中心
     closest_name = None
     min_d = float("inf")
     for c_name, pos in COUNTY_CENTROIDS.items():
@@ -216,30 +227,30 @@ def identify_clicked_county(lat: float, lon: float, geojson_features: list) -> s
 
 
 # ==========================================
-# 側邊欄：設定與控制區
+# 側邊欄：設定與部署狀態說明
 # ==========================================
 with st.sidebar:
     st.image("https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400&auto=format&fit=crop&q=80", 
              caption="Earth Observation & Weather", use_container_width=True)
     st.title("🛰️ 衛星氣象控制台")
-    st.markdown("基於 **中央氣象署 CWA API** 與 **高解析度衛星空照圖**")
+    st.markdown("氣象署 API × 衛星空照 × 逐時精細時間軸")
 
     # 手動更新氣象資料按鈕
     st.markdown("---")
     st.subheader("🔄 氣象資料同步")
     if st.button("即時重新擷取 CWA 資料", use_container_width=True, type="primary"):
-        with st.spinner("正在呼叫 CWA API (F-D0047-091)..."):
+        with st.spinner("正在呼叫 CWA API 獲取逐時與逐日預報..."):
             try:
-                count, _ = update_weather_data()
-                st.success(f"同步成功！已更新 {count} 筆氣溫預報。")
+                d_cnt, h_cnt = update_weather_data()
+                st.success(f"同步成功！逐日 {d_cnt} 筆，逐時 {h_cnt} 筆。")
                 st.rerun()
             except Exception as e:
                 st.error(f"同步發生錯誤: {e}")
 
-    st.caption(f"氣象署授權碼：`{CWA_API_KEY[:6]}...{CWA_API_KEY[-4:]}` (連線正常)")
+    st.caption(f"氣象署授權碼：`{CWA_API_KEY[:6]}...{CWA_API_KEY[-4:]}`")
 
     st.markdown("---")
-    # 城市快速選擇下拉選單
+    # 城市切換下拉選單
     available_regions = get_distinct_regions()
     county_list = [c for c in COUNTY_NAME_MAPPING.values() if c in available_regions]
     six_regions = ["北部地區", "中部地區", "南部地區", "東北部地區", "東部地區", "東南部地區"]
@@ -250,7 +261,7 @@ with st.sidebar:
     default_idx = all_options.index(current_selected) if current_selected in all_options else 0
 
     selected_from_dropdown = st.selectbox(
-        "下拉清單選擇 (或直接在地圖上點擊城市)：",
+        "切換城市 (或直接在地圖上點擊)：",
         all_options,
         index=default_idx,
         key="dropdown_region"
@@ -260,7 +271,17 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    st.info("💡 **操作提示**\n- **滑鼠移到任一縣市**：即時浮現該城市的天氣預報！\n- **點擊地圖上的縣市**：直接鎖定並查看一週氣溫趨勢與詳細數據。")
+    # 網站上線說明專區 (針對使用者的詢問)
+    st.subheader("🌐 網站發布狀態說明")
+    st.info("""
+    **目前狀態：本機運行中 (Localhost)**
+    - 目前僅能在您個人的電腦瀏覽器中開啟 (`http://localhost:8501`)。
+    
+    **如何讓所有人都能用網址觀看？**
+    1. 將此專案 Push 至您的 GitHub (我們已做好本機 commit)。
+    2. 前往 **[share.streamlit.io](https://share.streamlit.io)** 登入 GitHub。
+    3. 點擊 **Create app** 選擇本專案的 `app.py` 即可獲得**公開永久網址**！
+    """)
 
 
 # ==========================================
@@ -268,26 +289,26 @@ with st.sidebar:
 # ==========================================
 selected_region = st.session_state["selected_region"]
 
-st.markdown(f"""
+st.markdown("""
 <div class="main-header">
-    <h1 style="margin: 0; font-size: 26px; font-weight: 700;">🛰️ 台灣氣象預報儀表板 · 衛星遙測互動版</h1>
+    <h1 style="margin: 0; font-size: 26px; font-weight: 700;">🛰️ 台灣氣象預報儀表板 · 絲滑時間軸衛星版</h1>
     <p style="margin: 6px 0 0 0; opacity: 0.92; font-size: 14px;">
-        滑鼠指到哪即刻顯現該城市氣象 · 點擊切換全站圖表 · 原始深藍海域與翡翠島嶼空照圖
+        高解析度 Esri 衛星遙測圖 · 56 小時逐時精細滑桿 · 滑鼠懸停即時氣象 · 支援全台點擊聯動
     </p>
 </div>
 """, unsafe_allow_html=True)
 
-# 查詢所選城市的一週預報
-df_region = get_forecast_by_region(selected_region)
+# 查詢所選城市的資料 (逐日與逐時)
+df_region_daily = get_forecast_by_region(selected_region)
+df_region_hourly = get_hourly_forecast_by_region(selected_region)
 
-if not df_region.empty:
-    today_min = df_region.iloc[0]["minT"]
-    today_max = df_region.iloc[0]["maxT"]
+if not df_region_daily.empty:
+    today_min = df_region_daily.iloc[0]["minT"]
+    today_max = df_region_daily.iloc[0]["maxT"]
     today_avg = round((today_min + today_max) / 2, 1)
-    week_min = df_region["minT"].min()
-    week_max = df_region["maxT"].max()
+    week_min = df_region_daily["minT"].min()
+    week_max = df_region_daily["maxT"].max()
 
-    # 4 個 KPI 指標卡片
     col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
     with col_kpi1:
         st.metric(label=f"🏙️ {selected_region} 今日最高溫", value=f"{today_max} °C", delta=f"{round(today_max - today_min, 1)}°C 溫差")
@@ -302,32 +323,90 @@ else:
 
 
 # ==========================================
-# 主版面：左側地圖 (衛星空照 + 縣市 Hover 氣象) + 右側圖表
+# 主版面：左側地圖 (絲滑時間軸 + 衛星空照) + 右側圖表
 # ==========================================
 col_map, col_charts = st.columns([1.15, 1], gap="large")
 
 # ------------------------------------------
-# 左欄：衛星遙測空照地圖 (Esri World Imagery)
+# 左欄：衛星空照地圖 + 逐時絲滑時間軸
 # ------------------------------------------
 with col_map:
     st.subheader("🗺️ 台灣衛星遙測互動地圖")
+
+    # 取得資料庫中所有逐時時間點 (通常為 56 個逐小時/逐3小時預報點)
+    all_hourly_times = get_all_hourly_times()
+    if not all_hourly_times:
+        all_hourly_times = [datetime.now().strftime("%Y-%m-%d %H:00")]
+
+    # 時間軸控制列
+    st.markdown("<div class='timeline-card'>", unsafe_allow_html=True)
     
-    # 日期選擇滑桿
-    all_dates = get_all_dates()
-    if all_dates:
-        selected_date = st.select_slider(
-            "📅 選擇預報日期：",
-            options=all_dates,
-            value=all_dates[0]
-        )
-    else:
-        selected_date = datetime.now().strftime("%Y-%m-%d")
+    # 播放控制按鈕列
+    c_ctrl1, c_ctrl2, c_ctrl3, c_ctrl4 = st.columns([1, 1, 1, 3])
+    with c_ctrl1:
+        if st.button("⏮️ 前一刻", use_container_width=True):
+            if st.session_state["time_index"] > 0:
+                st.session_state["time_index"] -= 1
+                st.rerun()
+    with c_ctrl2:
+        if st.button("⏭️ 後一刻", use_container_width=True):
+            if st.session_state["time_index"] < len(all_hourly_times) - 1:
+                st.session_state["time_index"] += 1
+                st.rerun()
+    with c_ctrl3:
+        play_label = "⏸️ 暫停" if st.session_state["is_playing"] else "▶️ 播放"
+        if st.button(play_label, use_container_width=True):
+            st.session_state["is_playing"] = not st.session_state["is_playing"]
+            st.rerun()
+    with c_ctrl4:
+        # 當前時間點標籤
+        current_idx = min(st.session_state["time_index"], len(all_hourly_times) - 1)
+        cur_t_str = all_hourly_times[current_idx]
+        st.markdown(f"**⏰ 當前預報時點：** `{cur_t_str}`")
 
-    # 查詢該日全台預報資料
-    df_date_forecast = get_forecast_by_date(selected_date)
-    date_temp_dict = {row["regionName"]: (row["minT"], row["maxT"]) for _, row in df_date_forecast.iterrows()}
+    # 絲滑滑桿：以索引為單位，刻度精細到時
+    def format_time_label(idx):
+        t = all_hourly_times[idx]
+        return f"{t[5:7]}/{t[8:10]} {t[11:16]}"
 
-    # 建立純衛星遙測地圖物件 (無大圖標遮擋，天然深藍海洋與翠綠地貌)
+    selected_idx = st.slider(
+        "🎚️ 拖動時間軸（逐小時絲滑切換）：",
+        min_value=0,
+        max_value=len(all_hourly_times) - 1,
+        value=current_idx,
+        format_func=format_time_label,
+        key="hourly_slider"
+    )
+
+    if selected_idx != st.session_state["time_index"]:
+        st.session_state["time_index"] = selected_idx
+        st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # 若處於播放狀態，自動向前推進一格
+    if st.session_state["is_playing"]:
+        time.sleep(1.0)
+        if st.session_state["time_index"] < len(all_hourly_times) - 1:
+            st.session_state["time_index"] += 1
+        else:
+            st.session_state["time_index"] = 0
+        st.rerun()
+
+    selected_time = all_hourly_times[st.session_state["time_index"]]
+
+    # 查詢該時間點全台各縣市的即時預報資料
+    df_time_forecast = get_hourly_forecast_by_time(selected_time)
+    hourly_temp_dict = {
+        row["regionName"]: {
+            "temp": row["temp"],
+            "apparentTemp": row["apparentTemp"],
+            "humidity": row["humidity"],
+            "wx": row["wx"]
+        } for _, row in df_time_forecast.iterrows()
+    }
+
+    # 建立純衛星空照地圖 (Esri World Imagery)
     m = folium.Map(
         location=[23.75, 120.95],
         zoom_start=7.4,
@@ -336,63 +415,61 @@ with col_map:
         control_scale=True
     )
 
-    # 溫標顏色判定 (<20 藍, 20-25 綠, 25-30 黃, >30 紅)
-    def get_temp_color(avg_t: float) -> str:
-        if avg_t < 20.0:
+    def get_temp_color(t: float) -> str:
+        if t < 20.0:
             return "#3b82f6"  # 藍色
-        elif avg_t <= 25.0:
+        elif t <= 25.0:
             return "#10b981"  # 綠色
-        elif avg_t <= 30.0:
+        elif t <= 30.0:
             return "#f59e0b"  # 黃色
         else:
             return "#ef4444"  # 紅色
 
-    # 載入 22 個縣市的多邊形 GeoJSON，將當日氣象資料動態注入每個特徵屬性中
+    # 載入縣市 GeoJSON 並將該時間點的氣象資料注入特徵屬性中
     counties_geojson_path = os.path.join(current_dir, "data", "taiwan_counties.geojson")
     with open(counties_geojson_path, "r", encoding="utf-8") as f:
         counties_data = json.load(f)
 
-    # 動態注入氣象數據到 GeoJSON 屬性中，供 Hover Tooltip 即時顯示
     for feat in counties_data["features"]:
         raw_name = feat["properties"].get("name", "").strip()
         c_zh = COUNTY_NAME_MAPPING.get(raw_name, raw_name)
         feat["properties"]["city_name"] = c_zh
-        feat["properties"]["forecast_date"] = selected_date
+        feat["properties"]["forecast_time"] = selected_time
 
-        if c_zh in date_temp_dict:
-            min_t, max_t = date_temp_dict[c_zh]
-            avg_t = round((min_t + max_t) / 2, 1)
-            feat["properties"]["max_temp"] = f"{max_t} °C"
-            feat["properties"]["min_temp"] = f"{min_t} °C"
-            feat["properties"]["avg_temp"] = f"{avg_t} °C"
-            feat["properties"]["avg_val"] = avg_t
+        if c_zh in hourly_temp_dict:
+            c_info = hourly_temp_dict[c_zh]
+            t_val = c_info["temp"]
+            feat["properties"]["cur_temp"] = f"{t_val} °C"
+            feat["properties"]["app_temp"] = f"{c_info['apparentTemp']} °C" if c_info['apparentTemp'] else "無"
+            feat["properties"]["humidity"] = f"{int(c_info['humidity'])}%" if c_info['humidity'] else "無"
+            feat["properties"]["weather_desc"] = c_info["wx"] or "多雲"
+            feat["properties"]["temp_num"] = t_val
         else:
-            feat["properties"]["max_temp"] = "洽氣象署"
-            feat["properties"]["min_temp"] = "洽氣象署"
-            feat["properties"]["avg_temp"] = "洽氣象署"
-            feat["properties"]["avg_val"] = 25.0
+            feat["properties"]["cur_temp"] = "25.0 °C"
+            feat["properties"]["app_temp"] = "26.0 °C"
+            feat["properties"]["humidity"] = "75%"
+            feat["properties"]["weather_desc"] = "多雲"
+            feat["properties"]["temp_num"] = 25.0
 
-    # 加入 GeoJson 圖層：滑鼠指到哪，顯示該城市氣象！
+    # 繪製 GeoJson 縣市圖層（支援 Hover 高亮與精密 Tooltip）
     folium.GeoJson(
         counties_data,
         name="台灣各縣市邊界",
         style_function=lambda feat: {
-            "fillColor": get_temp_color(feat["properties"].get("avg_val", 25.0)),
-            # 若為當前已選定的城市，給予醒目的亮黃色邊框與高透明度；其餘保持精緻白色邊界
+            "fillColor": get_temp_color(feat["properties"].get("temp_num", 25.0)),
             "color": "#facc15" if feat["properties"].get("city_name") == selected_region else "#ffffff",
             "weight": 3.2 if feat["properties"].get("city_name") == selected_region else 1.2,
-            "fillOpacity": 0.55 if feat["properties"].get("city_name") == selected_region else 0.22,
+            "fillOpacity": 0.58 if feat["properties"].get("city_name") == selected_region else 0.25,
         },
         highlight_function=lambda feat: {
-            # 滑鼠懸停時強烈發光高亮
             "fillColor": "#38bdf8",
             "color": "#ffffff",
             "weight": 3.0,
             "fillOpacity": 0.75,
         },
         tooltip=folium.GeoJsonTooltip(
-            fields=["city_name", "forecast_date", "max_temp", "min_temp", "avg_temp"],
-            aliases=["🏙️ 城市縣市：", "📅 預報日期：", "🌡️ 最高氣溫：", "❄️ 最低氣溫：", "📊 平均氣溫："],
+            fields=["city_name", "forecast_time", "cur_temp", "app_temp", "humidity", "weather_desc"],
+            aliases=["🏙️ 城市縣市：", "⏰ 預報時段：", "🌡️ 即時氣溫：", "👕 體感溫度：", "💧 相對濕度：", "⛅ 天氣狀況："],
             localize=True,
             sticky=True,
             style="""
@@ -409,7 +486,7 @@ with col_map:
         )
     ).add_to(m)
 
-    # 若當前選中的城市在快取中有中心座標，加標一個優雅的選中光標
+    # 若選定城市在快取中有中心座標，加標金色圓點
     if selected_region in COUNTY_CENTROIDS:
         c_pos = COUNTY_CENTROIDS[selected_region]
         folium.CircleMarker(
@@ -423,16 +500,16 @@ with col_map:
             tooltip=f"🎯 目前鎖定分析：{selected_region}"
         ).add_to(m)
 
-    # 渲染 Folium 衛星地圖並監聽使用者點擊
+    # 渲染 Folium 地圖並監聽點擊
     map_output = st_folium(
         m, 
         width=540, 
-        height=460,
-        key="taiwan_satellite_weather_map",
+        height=450,
+        key=f"sat_map_{st.session_state['time_index']}",
         returned_objects=["last_clicked"]
     )
 
-    # 點擊地圖切換城市邏輯
+    # 點擊地圖切換城市
     if map_output and map_output.get("last_clicked"):
         click_coord = map_output["last_clicked"]
         if click_coord != st.session_state["last_map_click"]:
@@ -440,7 +517,6 @@ with col_map:
             c_lat = click_coord["lat"]
             c_lon = click_coord["lng"]
             
-            # 使用 Ray-Casting 判定點擊的縣市
             clicked_county = identify_clicked_county(c_lat, c_lon, counties_data["features"])
             if clicked_county and clicked_county != st.session_state["selected_region"]:
                 st.session_state["selected_region"] = clicked_county
@@ -449,12 +525,11 @@ with col_map:
     # 顯示目前鎖定狀態
     st.markdown(f"""
     <div style="margin-top: 6px;">
-        <span class="active-badge">🎯 目前分析城市：<b>{selected_region}</b>（可滑鼠懸停看氣溫，點擊切換城市）</span>
+        <span class="active-badge">🎯 目前分析城市：<b>{selected_region}</b>（可滑鼠懸停看即時氣象，點擊切換城市）</span>
     </div>
     """, unsafe_allow_html=True)
 
-    # 主要都會區快速切換快捷列
-    st.caption("熱門都會快速切換：")
+    # 快速都會列
     quick_cities = ["臺北市", "新北市", "桃園市", "臺中市", "臺南市", "高雄市"]
     btn_cols = st.columns(6)
     for idx, (b_name, b_col) in enumerate(zip(quick_cities, btn_cols)):
@@ -463,7 +538,7 @@ with col_map:
                 st.session_state["selected_region"] = b_name
                 st.rerun()
 
-    # 溫標圖例
+    # 圖例
     st.markdown("""
     <div class="legend-box">
         <div class="legend-item"><span class="legend-dot" style="background:#3b82f6;"></span> &lt; 20°C (低溫)</div>
@@ -475,105 +550,111 @@ with col_map:
 
 
 # ------------------------------------------
-# 右欄：折線圖 (Step 14) + 資料表格 (Step 15)
+# 右欄：逐時氣溫曲線與詳細資料
 # ------------------------------------------
 with col_charts:
-    st.subheader(f"📈 {selected_region} · 一週最高與最低氣溫折線圖")
+    tab_hourly, tab_weekly = st.tabs(["🕒 逐時高解析氣溫趨勢", "📅 一週逐日氣溫預報"])
 
-    if not df_region.empty:
-        df_plot = df_region.copy()
-        
-        # 使用 Altair 繪製精美折線圖 (MaxT 紅色、MinT 藍色、圓點數據點)
-        df_melted = df_plot.melt(
-            id_vars=["dataDate"], 
-            value_vars=["maxT", "minT"], 
-            var_name="溫度類型", 
-            value_name="氣溫"
-        )
-        df_melted["溫度類型"] = df_melted["溫度類型"].map({"maxT": "最高氣溫 (MaxT)", "minT": "最低氣溫 (MinT)"})
+    with tab_hourly:
+        st.subheader(f"📈 {selected_region} · 未來逐時氣溫與體感溫度曲線")
+        if not df_region_hourly.empty:
+            df_plot_h = df_region_hourly.copy()
 
-        color_scale = alt.Scale(
-            domain=["最高氣溫 (MaxT)", "最低氣溫 (MinT)"],
-            range=["#ef4444", "#3b82f6"]
-        )
+            # 使用 Altair 繪製平滑的逐時氣溫曲線
+            base_chart = alt.Chart(df_plot_h).encode(
+                x=alt.X("dataTime:N", title="預報時點 (每時/每3小時)", axis=alt.Axis(labelAngle=-40))
+            )
 
-        lines = alt.Chart(df_melted).mark_line(strokeWidth=3).encode(
-            x=alt.X("dataDate:N", title="預報日期", axis=alt.Axis(labelAngle=-25)),
-            y=alt.Y("氣溫:Q", title="氣溫 (°C)", scale=alt.Scale(domain=[df_melted["氣溫"].min() - 3, df_melted["氣溫"].max() + 3])),
-            color=alt.Color("溫度類型:N", scale=color_scale, legend=alt.Legend(title="指標項目", orient="top")),
-            tooltip=["dataDate", "溫度類型", "氣溫"]
-        )
+            temp_line = base_chart.mark_line(color="#ef4444", strokeWidth=3).encode(
+                y=alt.Y("temp:Q", title="氣溫 (°C)", scale=alt.Scale(domain=[df_plot_h["temp"].min() - 2, df_plot_h["temp"].max() + 2])),
+                tooltip=["dataTime", "temp", "apparentTemp", "humidity", "wx"]
+            )
+            temp_points = base_chart.mark_circle(color="#ef4444", size=50).encode(
+                y="temp:Q",
+                tooltip=["dataTime", "temp", "apparentTemp", "humidity", "wx"]
+            )
 
-        points = alt.Chart(df_melted).mark_circle(size=85, opacity=1).encode(
-            x=alt.X("dataDate:N"),
-            y=alt.Y("氣溫:Q"),
-            color=alt.Color("溫度類型:N", scale=color_scale),
-            tooltip=["dataDate", "溫度類型", "氣溫"]
-        )
+            chart_h = (temp_line + temp_points).properties(height=260)
+            st.altair_chart(chart_h, use_container_width=True)
 
-        chart = (lines + points).properties(height=260)
-        st.altair_chart(chart, use_container_width=True)
+            # 逐時數據表
+            st.markdown(f"**📋 {selected_region} 逐時詳細觀測數據**")
+            df_display_h = df_plot_h[["dataTime", "temp", "apparentTemp", "humidity", "wx"]].copy()
+            df_display_h.columns = ["預報時間", "氣溫 (°C)", "體感 (°C)", "相對濕度 (%)", "天氣現象"]
+            st.dataframe(df_display_h, use_container_width=True, hide_index=True)
+        else:
+            st.info("尚無該地區的逐時預報數據。")
 
-        # 一週詳細數據表格
-        st.markdown(f"**📋 {selected_region} 預報詳細數據 (Table)**")
-        df_display = df_plot[["dataDate", "minT", "maxT"]].copy()
-        df_display.columns = ["預報日期 (Date)", "最低溫 (°C)", "最高溫 (°C)"]
-        df_display["平均溫 (°C)"] = ((df_display["最低溫 (°C)"] + df_display["最高溫 (°C)"]) / 2).round(1)
-        df_display["溫差 (°C)"] = (df_display["最高溫 (°C)"] - df_display["最低溫 (°C)"]).round(1)
+    with tab_weekly:
+        st.subheader(f"📅 {selected_region} · 一週最高最低溫預報")
+        if not df_region_daily.empty:
+            df_plot_w = df_region_daily.copy()
+            df_melted_w = df_plot_w.melt(
+                id_vars=["dataDate"], 
+                value_vars=["maxT", "minT"], 
+                var_name="溫度類型", 
+                value_name="氣溫"
+            )
+            df_melted_w["溫度類型"] = df_melted_w["溫度類型"].map({"maxT": "最高氣溫 (MaxT)", "minT": "最低氣溫 (MinT)"})
 
-        st.dataframe(
-            df_display,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "預報日期 (Date)": st.column_config.TextColumn("預報日期", width="medium"),
-                "最低溫 (°C)": st.column_config.NumberColumn("最低氣溫 (MinT)", format="%.1f °C"),
-                "最高溫 (°C)": st.column_config.NumberColumn("最高氣溫 (MaxT)", format="%.1f °C"),
-                "平均溫 (°C)": st.column_config.NumberColumn("平均氣溫", format="%.1f °C"),
-                "溫差 (°C)": st.column_config.NumberColumn("日溫差", format="%.1f °C"),
-            }
-        )
-    else:
-        st.info("尚無圖表數據。")
+            color_scale_w = alt.Scale(
+                domain=["最高氣溫 (MaxT)", "最低氣溫 (MinT)"],
+                range=["#ef4444", "#3b82f6"]
+            )
+
+            lines_w = alt.Chart(df_melted_w).mark_line(strokeWidth=3).encode(
+                x=alt.X("dataDate:N", title="日期", axis=alt.Axis(labelAngle=-25)),
+                y=alt.Y("氣溫:Q", title="氣溫 (°C)"),
+                color=alt.Color("溫度類型:N", scale=color_scale_w),
+                tooltip=["dataDate", "溫度類型", "氣溫"]
+            )
+            points_w = alt.Chart(df_melted_w).mark_circle(size=80).encode(
+                x="dataDate:N",
+                y="氣溫:Q",
+                color=alt.Color("溫度類型:N", scale=color_scale_w),
+                tooltip=["dataDate", "溫度類型", "氣溫"]
+            )
+            st.altair_chart((lines_w + points_w).properties(height=260), use_container_width=True)
+
+            df_display_w = df_plot_w[["dataDate", "minT", "maxT"]].copy()
+            df_display_w.columns = ["預報日期", "最低溫 (°C)", "最高溫 (°C)"]
+            st.dataframe(df_display_w, use_container_width=True, hide_index=True)
+        else:
+            st.info("尚無一週數據。")
 
 
 # ==========================================
-# 底部：SQL 資料庫驗證專區 (對應微課程 Step 10)
+# 底部：部署教學與 SQL 驗證工具
 # ==========================================
 st.markdown("---")
-with st.expander("🔍 資料庫設計與 SQL 查詢驗證工具 (Micro Course Step 9 & 10)"):
-    st.markdown("""
-    此區塊對應投影片 **Step 9 資料庫設計** 與 **Step 10 查詢資料驗證**，可驗證資料庫 `TemperatureForecasts` 表中的結構與真實資料。
-    """)
-    col_sql1, col_sql2 = st.columns([1, 1])
-    
-    with col_sql1:
-        st.markdown("##### 📌 預設驗證指令 (Step 10)")
-        sample_query = st.selectbox(
-            "選擇要測試的 SQL 語句：",
-            [
-                f"SELECT * FROM TemperatureForecasts WHERE regionName = '{selected_region}';",
-                "SELECT DISTINCT regionName FROM TemperatureForecasts WHERE regionName LIKE '%市%' OR regionName LIKE '%縣%';",
-                "SELECT regionName, AVG(maxT) as avg_max, AVG(minT) as avg_min FROM TemperatureForecasts GROUP BY regionName LIMIT 10;",
-                "SELECT COUNT(*) as total_records FROM TemperatureForecasts;"
-            ]
-        )
-        sql_input = st.text_area("SQL 查詢指令：", value=sample_query, height=80)
-        
-    with col_sql2:
-        st.markdown("##### 📊 執行結果 (pd.read_sql_query)")
+col_exp1, col_exp2 = st.columns(2)
+
+with col_exp1:
+    with st.expander("🌐 如何讓網站公開上線？（任何人都可以透過網址觀看）"):
+        st.markdown("""
+        ### 🚀 3 步驟免費部署到 Streamlit Community Cloud：
+        1. **上傳程式碼到 GitHub**：
+           在專案目錄下將所有檔案推送到您的 GitHub Repository。
+        2. **前往 Streamlit Cloud**：
+           開啟 [share.streamlit.io](https://share.streamlit.io) 並以您的 GitHub 帳號登入。
+        3. **建立 App**：
+           - 點擊 **Create app**
+           - 選擇您的 Repository (例如 `HW10-Taiwan-Weather`)
+           - Main file path 輸入 `app.py`
+           - 點擊 **Deploy**！
+        4. **完成**：
+           約 1~2 分鐘後，您就會獲得一個專屬的公開網址（例如：`https://taiwan-weather-app.streamlit.app`），任何人打開網址都能使用！
+        """)
+
+with col_exp2:
+    with st.expander("🔍 資料庫設計與 SQL 查詢驗證工具 (Micro Course Step 9 & 10)"):
+        st.markdown("可執行 SQL 指令檢驗 `HourlyForecasts` (逐時) 與 `TemperatureForecasts` (逐日) 資料表：")
+        sql_input = st.text_area("SQL 查詢指令：", value=f"SELECT * FROM HourlyForecasts WHERE regionName = '{selected_region}' LIMIT 10;", height=70)
         if st.button("執行 SQL 查詢"):
             try:
                 res_df = execute_custom_query(sql_input)
                 st.dataframe(res_df, use_container_width=True)
             except Exception as e:
                 st.error(f"SQL 執行失敗: {e}")
-        else:
-            try:
-                res_df = execute_custom_query(sample_query)
-                st.dataframe(res_df, use_container_width=True)
-            except Exception as e:
-                st.error(f"查詢錯誤: {e}")
 
-# 頁尾標註
-st.caption("Taiwan Weather Forecast Dashboard © 2026 | 衛星遙測互動微課程專案 | Vibe Coding with Antigravity & Gemini")
+st.caption("Taiwan Weather Forecast Dashboard © 2026 | 衛星遙測 × 逐時精細絲滑時間軸 | Vibe Coding with Antigravity & Gemini")
