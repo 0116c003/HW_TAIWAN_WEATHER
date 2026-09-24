@@ -27,22 +27,41 @@ src_dir = os.path.join(current_dir, "src")
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 
-from db_manager import (
-    init_db,
-    get_distinct_regions,
-    get_forecast_by_region,
-    get_hourly_forecast_by_region,
-    get_hourly_forecast_by_time,
-    get_all_dates,
-    get_all_hourly_times,
-    execute_custom_query
-)
-from fetch_weather import (
-    update_weather_data,
-    REGION_COORDINATES,
-    REGIONS_MAPPING,
-    CWA_API_KEY
-)
+try:
+    from src.db_manager import (
+        init_db,
+        get_distinct_regions,
+        get_forecast_by_region,
+        get_hourly_forecast_by_region,
+        get_hourly_forecast_by_time,
+        get_all_dates,
+        get_all_hourly_times,
+        execute_custom_query
+    )
+    from src.fetch_weather import (
+        update_weather_data,
+        REGION_COORDINATES,
+        REGIONS_MAPPING,
+        CWA_API_KEY
+    )
+except ImportError:
+    from db_manager import (
+        init_db,
+        get_distinct_regions,
+        get_forecast_by_region,
+        get_hourly_forecast_by_region,
+        get_hourly_forecast_by_time,
+        get_all_dates,
+        get_all_hourly_times,
+        execute_custom_query
+    )
+    from fetch_weather import (
+        update_weather_data,
+        REGION_COORDINATES,
+        REGIONS_MAPPING,
+        CWA_API_KEY
+    )
+
 
 # 頁面配置
 st.set_page_config(
