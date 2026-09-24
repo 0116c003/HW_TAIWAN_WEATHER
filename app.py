@@ -361,19 +361,19 @@ with col_map:
     st.markdown("<div class='timeline-card'>", unsafe_allow_html=True)
     
     # 播放控制按鈕列
-    c_ctrl1, c_ctrl2, c_ctrl3, c_ctrl4 = st.columns([1, 1, 1, 3])
+    c_ctrl1, c_ctrl2, c_ctrl3, c_ctrl4 = st.columns([1.2, 1.2, 1.5, 3.2])
     with c_ctrl1:
-        if st.button("⏮️ 前一刻", use_container_width=True):
+        if st.button("⏮️ 前一小時", use_container_width=True):
             if st.session_state["time_index"] > 0:
                 st.session_state["time_index"] -= 1
                 st.rerun()
     with c_ctrl2:
-        if st.button("⏭️ 後一刻", use_container_width=True):
+        if st.button("⏭️ 下一小時", use_container_width=True):
             if st.session_state["time_index"] < len(all_hourly_times) - 1:
                 st.session_state["time_index"] += 1
                 st.rerun()
     with c_ctrl3:
-        play_label = "⏸️ 暫停" if st.session_state["is_playing"] else "▶️ 播放"
+        play_label = "⏸️ 暫停播放" if st.session_state["is_playing"] else "▶️ 自動播放"
         if st.button(play_label, use_container_width=True):
             st.session_state["is_playing"] = not st.session_state["is_playing"]
             st.rerun()
@@ -383,22 +383,18 @@ with col_map:
         cur_t_str = all_hourly_times[current_idx]
         st.markdown(f"**⏰ 當前預報時點：** `{cur_t_str}`")
 
-    # 絲滑滑桿：以索引為單位，刻度精細到時
-    def format_time_label(idx):
-        t = all_hourly_times[idx]
-        return f"{t[5:7]}/{t[8:10]} {t[11:16]}"
-
-    selected_idx = st.slider(
+    # 絲滑滑桿：使用 select_slider 直觀拖動精細時間刻度
+    selected_time_val = st.select_slider(
         "🎚️ 拖動時間軸（逐小時絲滑切換）：",
-        min_value=0,
-        max_value=len(all_hourly_times) - 1,
-        value=current_idx,
-        format_func=format_time_label,
-        key="hourly_slider"
+        options=all_hourly_times,
+        value=cur_t_str,
+        format_func=lambda t: f"{t[5:7]}/{t[8:10]} {t[11:16]}",
+        key="hourly_select_slider"
     )
 
-    if selected_idx != st.session_state["time_index"]:
-        st.session_state["time_index"] = selected_idx
+    new_time_idx = all_hourly_times.index(selected_time_val)
+    if new_time_idx != st.session_state["time_index"]:
+        st.session_state["time_index"] = new_time_idx
         st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
