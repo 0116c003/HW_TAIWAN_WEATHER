@@ -71,6 +71,8 @@ st.set_page_config(
 # 初始化 session_state
 if "selected_region" not in st.session_state:
     st.session_state["selected_region"] = "臺北市"
+if "main_city_select_dropdown" not in st.session_state:
+    st.session_state["main_city_select_dropdown"] = "臺北市"
 if "last_map_click" not in st.session_state:
     st.session_state["last_map_click"] = None
 if "last_obj_click" not in st.session_state:
@@ -281,21 +283,6 @@ with st.sidebar:
                 st.error(f"同步發生錯誤: {e}")
 
     st.caption(f"氣象署授權碼：`{CWA_API_KEY[:6]}...{CWA_API_KEY[-4:]}`")
-
-    # 微課程 Step 13：側邊欄下拉選單選擇城市
-    st.markdown("---")
-    st.subheader("📍 下拉選單選擇城市 (Step 13)")
-    current_city = st.session_state["selected_region"]
-    default_side_idx = county_options.index(current_city) if current_city in county_options else 0
-    selected_from_sidebar = st.selectbox(
-        "選擇要分析的城市 (Select City)：",
-        county_options,
-        index=default_side_idx,
-        key="sidebar_city_select"
-    )
-    if selected_from_sidebar != st.session_state["selected_region"]:
-        st.session_state["selected_region"] = selected_from_sidebar
-        st.rerun()
 
     st.markdown("---")
     st.subheader("🌐 網站發布狀態說明")
@@ -514,25 +501,30 @@ with col_map:
         returned_objects=["last_clicked", "last_object_clicked"]
     )
 
-    # 點擊地圖即時切換城市邏輯
+    # 點擊地圖即時切換城市邏輯 (點選地圖即時更新曲線圖與下拉選單)
     clicked_county = None
     if map_output:
+        # 1. 優先檢查 GeoJson 縣市物件點擊
         obj_clicked = map_output.get("last_object_clicked")
-        if obj_clicked and obj_clicked != st.session_state.get("last_obj_click") and isinstance(obj_clicked, dict):
-            st.session_state["last_obj_click"] = obj_clicked
+        if obj_clicked and isinstance(obj_clicked, dict):
             props = obj_clicked.get("properties", {})
-            if props.get("city_name"):
-                clicked_county = props["city_name"]
+            name = props.get("city_name")
+            if name and name != st.session_state["selected_region"]:
+                clicked_county = name
 
+        # 2. 檢查地圖經緯度座標點擊 (Ray-Casting 多邊形測試與重心距離匹配)
         click_coord = map_output.get("last_clicked")
-        if click_coord and click_coord != st.session_state.get("last_map_click") and not clicked_county:
-            st.session_state["last_map_click"] = click_coord
+        if click_coord and not clicked_county:
             c_lat = click_coord["lat"]
             c_lon = click_coord["lng"]
-            clicked_county = identify_clicked_county(c_lat, c_lon, counties_data["features"])
+            cand_name = identify_clicked_county(c_lat, c_lon, counties_data["features"])
+            if cand_name and cand_name != st.session_state["selected_region"]:
+                clicked_county = cand_name
 
+    # 若地圖點擊了新城市，雙向同步更新 session_state 與下拉選單
     if clicked_county and clicked_county != st.session_state["selected_region"]:
         st.session_state["selected_region"] = clicked_county
+        st.session_state["main_city_select_dropdown"] = clicked_county
         st.rerun()
 
     # 圖例
@@ -555,17 +547,17 @@ with col_charts:
     with col_c_head:
         st.subheader("📈 城市未來氣溫與體感曲線")
     with col_c_dropdown:
-        curr_drop_idx = county_options.index(selected_region) if selected_region in county_options else 0
-        selected_from_main_dropdown = st.selectbox(
+        # 下拉選單選擇回調：與地圖選取即時雙向連動
+        def on_city_dropdown_change():
+            st.session_state["selected_region"] = st.session_state["main_city_select_dropdown"]
+
+        st.selectbox(
             "🏙️ 下拉選單選擇城市 (Select City)：",
             county_options,
-            index=curr_drop_idx,
             key="main_city_select_dropdown",
+            on_change=on_city_dropdown_change,
             help="對應微課程 Step 13 功能：可在此下拉選擇城市，亦可直接點擊左方地圖！"
         )
-        if selected_from_main_dropdown != st.session_state["selected_region"]:
-            st.session_state["selected_region"] = selected_from_main_dropdown
-            st.rerun()
 
     tab_hourly, tab_weekly = st.tabs(["🕒 逐時氣溫與體感曲線", "📅 一週逐日氣溫預報"])
 
