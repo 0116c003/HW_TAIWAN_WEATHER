@@ -1,124 +1,127 @@
-# 🌤️ Taiwan Weather Forecast (台灣天氣預報 Web 應用)
+# 臺灣即時氣象與 36 小時預報地圖系統 (Taiwan Weather Hub)
 
-> **打造你的 AI Coding Agent：Antigravity × Gemini × GitHub**
->
-> 這是基於中央氣象署 (CWA) Open Data、SQLite 與 Streamlit 打造的現代化互動式氣象預報儀表板。
+> 國立中興大學 電機工程學系 (NCHU EE)  
+> 遵循「**From Idea to Code - Vibe Coding AI 協作開發流程**」實作之氣象預報系統
 
----
+[![線上體驗網址](https://img.shields.io/badge/線上體驗網址-點此立即前往-success?style=for-the-badge&logo=google-chrome&logoColor=white)](https://0116c003.github.io/HW_TAIWAN_WEATHER/)
 
-## 📌 專案概述 (Project Overview)
+[![GitHub repo](https://img.shields.io/badge/GitHub-HW__TAIWAN__WEATHER-blue?logo=github)](https://github.com/0116c003/HW_TAIWAN_WEATHER)
+[![Data](https://img.shields.io/badge/Data-中央氣象署_CWA_OpenData-0284c7)](https://opendata.cwa.gov.tw/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-本專案完全對應 **「AI 創新微課程：Taiwan Weather Forecast — 從氣象資料到互動式天氣預報應用」** 24 個學習指標與 **「打造你的 AI Coding Agent」** 10 大實作步驟。
+### 🌐 線上即時體驗網址 (Live Demo Website)
+👉 **[https://0116c003.github.io/HW_TAIWAN_WEATHER/](https://0116c003.github.io/HW_TAIWAN_WEATHER/)**
 
-透過 Python 介接中央氣象署 API、自動解析 JSON 結構、儲存於 SQLite 資料庫，並透過 Streamlit 與 Folium 構建包含地圖視覺化、氣溫折線圖、資料表格與 SQL 驗證工具的完整氣象儀表板。
-
----
-
-## 🚀 核心功能特色 (Key Features)
-
-1. **中央氣象署 API 串接 (CWA Open Data)**
-   - 資料集：`F-D0047-091`（臺灣各縣市鄉鎮未來1週逐12小時天氣預報）
-   - 自動提取 `MinT` (最低溫) 與 `MaxT` (最高溫)
-   - 自動將全台 22 縣市資料彙整歸納為 **台灣 6 大預報分區**（北部地區、中部地區、南部地區、東北部地區、東部地區、東南部地區）
-
-2. **SQLite 資料庫儲存與去重 (Database Management)**
-   - 資料表：`TemperatureForecasts` (`id`, `regionName`, `dataDate`, `minT`, `maxT`)
-   - 具備 `UNIQUE(regionName, dataDate)` 約束，重複執行不重複插入（`INSERT OR REPLACE`）
-
-3. **台灣地圖互動視覺化 (Folium + Streamlit)**
-   - 支援日期選擇器（切換未來一週每日氣溫分佈）
-   - 依據平均氣溫實施 **四級溫標著色**：
-     - 🔵 **藍色**：`< 20°C` (低溫)
-     - 🟢 **綠色**：`20 - 25°C` (舒適)
-     - 🟡 **黃色**：`25 - 30°C` (溫暖)
-     - 🔴 **紅色**：`> 30°C` (高溫)
-   - 圓點互動式 Tooltip 與詳細氣溫彈窗 (Popup)
-
-4. **動態趨勢折線圖與詳細數據表格 (Charts & Tables)**
-   - 繪製一週最高溫 (紅色折線) 與最低溫 (藍色折線)
-   - 清楚呈現每日高低溫、平均溫與日溫差數值
-
-5. **SQL 查詢驗證控制台 (SQL Console)**
-   - 內建互動式 SQL 查詢框，可直接測試 `SELECT DISTINCT regionName FROM TemperatureForecasts;` 等驗證語句。
-
-6. **健壯的異常處理與備援機制 (Fault Tolerance)**
-   - 針對台灣政府 SSL 憑證優化網路連線
-   - 內建離線備援資料生成器，若斷網或 API 額度限制仍可順暢演示。
+- 💻 **GitHub 原始碼儲存庫**：[https://github.com/0116c003/HW_TAIWAN_WEATHER](https://github.com/0116c003/HW_TAIWAN_WEATHER)
 
 ---
 
-## 📂 專案目錄結構 (Directory Structure)
+## 🌟 專案核心特色
 
-```text
-Taiwan-Weather-Project/
-├── data/
-│   └── data.db                # SQLite 氣象資料庫 (TemperatureForecasts 表)
-├── src/
-│   ├── __init__.py
-│   ├── db_manager.py          # 資料庫連線、建表、查詢封裝 (Step 8, 9, 10, 12)
-│   └── fetch_weather.py       # CWA API 擷取、JSON 解析、分區統計 (Step 3, 4, 5, 6, 7)
-├── app.py                     # Streamlit 網頁應用程式主程式 (Step 11 ~ 19)
-├── requirements.txt           # 專案 Python 套件依賴
-├── .gitignore                 # Git 忽略配置
-└── README.md                  # 專案詳細說明文件
+本專案參考交通部中央氣象署官方氣象台首頁之核心機能（全台 22 縣市、今明 36 小時三時段預報、鄉鎮微氣候、空氣品質監測與台灣地圖定位），**摒棄傳統老舊公家機關排版，以現代頂級視覺設計（Cyber-Glassmorphism 玻璃擬態與動態天候氛圍）重新打造**：
+
+1. **📡 串接中央氣象署 (CWA) 官方開放資料 API (`F-C0032-001`)**
+   - 整合即時 API Token：`CWA-F5CD0E42-DE70-4BDD-A2E6-077A2FF67969`
+   - 全台 22 縣市（北部、中部、南部、東部、外島）即時天候資訊零時差同步。
+   - 具備離線資料庫快照容錯備援，斷網時依然順暢呈現。
+
+2. **⏱️ 今明 36 小時三階段時段預報卡片 (比照氣象署規格)**
+   - **時段一：今日白天** (12:00 ~ 18:00)
+   - **時段二：今晚明晨** (18:00 ~ 06:00)
+   - **時段三：明日白天** (06:00 ~ 18:00)
+   - 完整展示天氣現象 (Wx)、氣溫區間 (MinT ~ MaxT)、降雨機率 (PoP) 及體感舒適度 (CI)。
+
+3. **🗺️ 臺灣高質感向量互動氣象地圖 (SVG Vector Map)**
+   - 臺灣本島向量輪廓，支援縣市 hover 光暈與點擊即時聚焦。
+   - 地圖上浮動各縣市即時氣候圖徽與氣溫標記。
+   - 支援三種地圖切換模式：**【氣象圖示】**、**【氣溫分佈】**、**【降雨機率】**。
+   - 專屬獨立離島視窗（澎湖、金門、馬祖/連江），直覺易讀。
+
+4. **🌿 環境部空氣品質 (AQI) 即時監測**
+   - 整合當前縣市測站之 AQI 指標數值、色彩級距色條與健康建議（良好、普通、敏感不良）。
+
+5. **🤖 AI 智慧生活氣象指引**
+   - **穿衣建議**：依據氣溫與舒適度動態推薦短袖/長袖/薄外套/保暖防風。
+   - **雨具攜帶**：依據降雨機率 (PoP) 智慧提醒是否攜帶雨傘。
+   - **紫外線指數 (UV)**：日間防曬指南與遮陽建議。
+   - **運動合適度**：戶外慢跑散步之宜忌指數。
+
+6. **🎨 頂級視覺體驗與極致細節**
+   - **動態天候漸層背景**：根據選定城市與晝夜時間，動態轉換晴朗天藍、暮色夕陽、夜幕繁星或雨天深靛藍。
+   - **深色 / 淺色主題無縫切換**（Cyber Dark / Fresh Daylight）。
+   - **Web Audio 自然氛圍音效合成器**：純程式碼合成微風與柔和雨滴白噪音，無須外載音檔。
+   - **GPS 定位**：一鍵利用 HTML5 Geolocation 計算距離最近的臺灣縣市並自動切換。
+   - **我的收藏 (Favorites)**：喜愛縣市持久化儲存於 `localStorage`。
+
+---
+
+## 🛠️ 技術架構 (Tech Stack)
+
+```
+[ 中央氣象署 CWA API (F-C0032-001) ]
+                  │
+                  ▼
+┌───────────────────────────────────────────────┐
+│              Taiwan Weather Hub               │
+├───────────────────────┬───────────────────────┤
+│    前端現代 Web App    │   後端/本地資料庫管理   │
+│  - Semantic HTML5     │  - Python 3.11+       │
+│  - Modern Vanilla CSS │  - SQLite3            │
+│  - ES6+ JavaScript    │  - weather_db.py      │
+│  - Interactive SVG Map│  - requests / urllib  │
+│  - Web Audio API      │                       │
+└───────────────────────┴───────────────────────┘
 ```
 
 ---
 
-## 🛠️ 安裝與啟動教學 (Quick Start)
+## 🚀 執行與使用方式
 
-### 1. 安裝必要套件
-在專案根目錄下執行：
+### 1. 網頁端即時預覽（直接開啟）
+無需安裝任何重量級伺服器或依賴，直接以瀏覽器開啟 `index.html` 即可瀏覽完整動態效果：
 ```bash
+# Windows 快速開啟
+start index.html
+```
+
+### 2. 執行 Python SQLite 氣象資料同步腳本 (課綱需求)
+如需檢驗 Python 與 SQLite 資料庫存儲，執行以下指令：
+```bash
+# 安裝選用套件
 pip install -r requirements.txt
-```
 
-### 2. (選用) 執行後端資料擷取測試
-驗證 CWA API 串接與 SQLite 寫入：
-```bash
-python src/fetch_weather.py
+# 執行資料庫初始化與 CWA API 同步
+python weather_db.py
 ```
+執行後將在目錄下生成 `weather.db`，並在終端機輸出全台縣市三時段預報結構表格。
 
-### 3. 啟動 Streamlit 氣象預報儀表板
-```bash
-streamlit run app.py
-```
-啟動後，瀏覽器會自動打開：`http://localhost:8501`。
+### 3. 一鍵推送到 GitHub (Git Sync)
+已預先設定專屬推送腳本 `push_to_github.bat`：
+1. 請確認已在您的 GitHub 帳號 (`0116c003`) 建立名為 `HW_TAIWAN_WEATHER` 的 Repository。
+2. 執行 `push_to_github.bat`，即可自動執行 `git add`, `commit` 與 `push` 至 GitHub 主分支！
 
 ---
 
-## 🌐 連結至個人的 GitHub Repository (Git & GitHub)
+## 📁 專案檔案結構
 
-若要將此專案推送到您的 GitHub：
-
-1. 前往 [GitHub.com](https://github.com/) 點擊 **New repository**
-2. 倉庫名稱建議命名為：`HW10-Taiwan-Weather`
-3. 取得您的 Repository URL（例如：`https://github.com/您的帳號/HW10-Taiwan-Weather.git`）
-4. 在本專案終端機執行：
-```bash
-git remote add origin https://github.com/您的帳號/HW10-Taiwan-Weather.git
-git branch -M main
-git push -u origin main
+```
+Taiwan-Weather-Project/
+│
+├── index.html              # 現代化氣象儀表板主要結構 (HTML5)
+├── style.css               # 玻璃擬態、動態天候主題與向量地圖樣式 (CSS3)
+├── app.js                  # CWA API 串接、地圖繪製與互動邏輯 (ES6+)
+├── taiwan_counties_data.js # 臺灣各縣市高精度 GIS 邊界向量資料
+├── cwa_sample.json         # 離線/備援氣象資料快照
+├── weather_db.py           # Python 串接 CWA API 並持久化至 SQLite 腳本
+├── requirements.txt        # Python 相依套件列表
+├── push_to_github.bat      # 一鍵自動推送至 GitHub 輔助批次檔
+├── .gitignore              # Git 版本控制忽略檔
+└── README.md               # 專案詳細說明文件
 ```
 
 ---
 
-## 📋 微課程 24 步驟對照檢查表 (Checklist)
-
-- [x] **Step 1~3**: 註冊 CWA Open Data 平台並取得授權碼
-- [x] **Step 4**: 使用 `requests` 取得 JSON 格式氣象資料
-- [x] **Step 5~6**: JSON 結構解析，提取 `MinT` / `MaxT`
-- [x] **Step 7**: 使用 `Pandas` 整理預覽結構化資料
-- [x] **Step 8~9**: 設計 `TemperatureForecasts` 資料表與建立 SQLite 資料庫
-- [x] **Step 10**: 使用 SQL 指令檢查與驗證資料
-- [x] **Step 11**: 建立 Streamlit 應用環境與頁面配置
-- [x] **Step 12**: 使用 SQL 查詢從資料庫讀取資料
-- [x] **Step 13**: 建立互動式下拉選單選擇地區
-- [x] **Step 14**: 繪製一週最高溫 (紅) 與最低溫 (藍) 折線圖
-- [x] **Step 15**: 建立完整數據表格
-- [x] **Step 16**: 整合 Web App 介面
-- [x] **Step 17**: 使用 Folium 建立台灣地圖並配置四級溫標著色
-- [x] **Step 18**: 實作日期選擇器與動態互動天氣地圖
-- [x] **Step 19**: 完成 Taiwan Weather Dashboard 成果展示
-- [x] **Step 20**: 程式碼模組化、異常處理、去重防呆與中文註解
-- [x] **Step 21**: Git 本地版本控制與 GitHub 串接準備
+## 👨‍💻 開發者資訊
+- **科系**：國立中興大學 電機工程學系 (NCHU EE)
+- **GitHub**：[0116c003](https://github.com/0116c003)
+- **課程專題**：中央氣象署 OpenData 即時氣象預報系統 (HW_TAIWAN_WEATHER)
