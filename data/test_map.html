@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+    
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.0/css/bootstrap-glyphicons.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.2.0/css/all.min.css"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/python-visualization/folium/folium/templates/leaflet.awesome.rotate.min.css"/>
+    
+            <meta name="viewport" content="width=device-width,
+                initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <style>
+                #map_b1350e5418f299a3b12b261f1d4fb4d2 {
+                    position: relative;
+                    width: 100.0%;
+                    height: 100.0%;
+                    left: 0.0%;
+                    top: 0.0%;
+                }
+                .leaflet-container { font-size: 1rem; }
+            </style>
+
+            <style>html, body {
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+            }
+            </style>
+
+            <style>#map {
+                position:absolute;
+                top:0;
+                bottom:0;
+                right:0;
+                left:0;
+                }
+            </style>
+
+            <script>
+                L_NO_TOUCH = false;
+                L_DISABLE_3D = false;
+            </script>
+
+        
+</head>
+<body>
+    
+    
+            <div class="folium-map" id="map_b1350e5418f299a3b12b261f1d4fb4d2" ></div>
+        
+</body>
+<script>
+    
+    
+            var map_b1350e5418f299a3b12b261f1d4fb4d2 = L.map(
+                "map_b1350e5418f299a3b12b261f1d4fb4d2",
+                {
+                    center: [23.75, 120.95],
+                    crs: L.CRS.EPSG3857,
+                    ...{
+  "zoom": 7.4,
+  "zoomControl": true,
+  "preferCanvas": false,
+}
+
+                }
+            );
+
+            
+
+        
+    
+        function geo_json_1661f8f7bbc61d2ad25dc4d4c4af94b4_styler(feature) {
+            switch(feature.properties.name) {
+                default:
+                    return {"color": "#16a34a", "fillColor": "#4ade80", "fillOpacity": 0.85, "weight": 2};
+            }
+        }
+
+        function geo_json_1661f8f7bbc61d2ad25dc4d4c4af94b4_onEachFeature(feature, layer) {
+
+            layer.on({
+            });
+        };
+        var geo_json_1661f8f7bbc61d2ad25dc4d4c4af94b4 = L.geoJson(null, {
+                onEachFeature: geo_json_1661f8f7bbc61d2ad25dc4d4c4af94b4_onEachFeature,
+            
+                style: geo_json_1661f8f7bbc61d2ad25dc4d4c4af94b4_styler,
+            ...{
+}
+        });
+
+        function geo_json_1661f8f7bbc61d2ad25dc4d4c4af94b4_add (data) {
+            geo_json_1661f8f7bbc61d2ad25dc4d4c4af94b4
+                .addData(data);
+        }
+            geo_json_1661f8f7bbc61d2ad25dc4d4c4af94b4_add({"features": [{"_id": "taiwan", "geometry": {"coordinates": [[[121.777818, 24.394274], [121.175632, 22.790857], [120.74708, 21.970571], [120.220083, 22.814861], [120.106189, 23.556263], [120.69468, 24.538451], [121.495044, 25.295459], [121.951244, 24.997596], [121.777818, 24.394274]]], "type": "Polygon"}, "properties": {"code": "TWN", "group": "Countries", "name": "Taiwan"}, "type": "Feature"}], "type": "FeatureCollection"});
+
+        
+    
+            geo_json_1661f8f7bbc61d2ad25dc4d4c4af94b4.addTo(map_b1350e5418f299a3b12b261f1d4fb4d2);
+        
+</script>
+</html>

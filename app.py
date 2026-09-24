@@ -4,17 +4,18 @@ Taiwan Weather Forecast - Streamlit Dashboard
 符合微課程 Step 11 至 Step 20 的完整實作：
 - Step 11: Streamlit 基本結構與現代化科技風 UI
 - Step 12: 從 SQLite 資料庫 (data.db) 讀取資料
-- Step 13: 互動式下拉選單選擇地區
+- Step 13: 互動式選單與地圖點擊雙向連動選擇地區
 - Step 14: 繪製一週最高溫 (MaxT 紅線) 與最低溫 (MinT 藍線) 折線圖
 - Step 15: 一週氣溫詳細資料表格
 - Step 16: 整合式 Web App 介面
-- Step 17 & 18: Folium 台灣氣溫互動地圖（四段溫標著色、日期切換、Tooltip）
+- Step 17 & 18: Folium 台灣氣溫互動地圖（海為藍色、島為綠色、無浮水印、四級溫標著色、日期切換、Tooltip）
 - Step 19: 完整 Taiwan Weather Dashboard (KPI 指標卡、雙欄地圖與圖表)
 - Step 20: 健壯錯誤處理、即時更新 CWA 資料按鈕、SQL 驗證控制台
 """
 
 import os
 import sys
+import json
 from datetime import datetime
 import streamlit as st
 import pandas as pd
@@ -51,10 +52,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# 初始化 session_state
+if "selected_region" not in st.session_state:
+    st.session_state["selected_region"] = "中部地區"
+if "last_map_click" not in st.session_state:
+    st.session_state["last_map_click"] = None
+
 # 自訂 CSS 提升介面質感 (符合現代 Web 設計美學)
 st.markdown("""
 <style>
-    /* 全域字體與背景美化 */
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
     html, body, [class*="css"] {
         font-family: 'Noto Sans TC', sans-serif;
@@ -62,20 +68,23 @@ st.markdown("""
     
     .main-header {
         background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-        padding: 24px;
-        border-radius: 12px;
+        padding: 22px 28px;
+        border-radius: 14px;
         color: white;
-        margin-bottom: 24px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        margin-bottom: 22px;
+        box-shadow: 0 4px 18px rgba(0,0,0,0.12);
     }
     
-    .metric-card {
-        background: #ffffff;
-        border-radius: 10px;
-        padding: 16px;
-        border-left: 4px solid #2a5298;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        text-align: center;
+    .active-badge {
+        display: inline-block;
+        background: #eff6ff;
+        color: #1d4ed8;
+        border: 1px solid #bfdbfe;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 14px;
+        font-weight: 600;
+        margin: 6px 0 12px 0;
     }
     
     .legend-box {
@@ -84,9 +93,10 @@ st.markdown("""
         padding: 10px;
         background: #f8fafc;
         border-radius: 8px;
-        margin-top: 8px;
+        margin-top: 10px;
         font-size: 13px;
         font-weight: 500;
+        border: 1px solid #e2e8f0;
     }
     
     .legend-item {
@@ -96,10 +106,16 @@ st.markdown("""
     }
     
     .legend-dot {
-        width: 12px;
-        height: 12px;
+        width: 14px;
+        height: 14px;
         border-radius: 50%;
         display: inline-block;
+    }
+    
+    /* 地圖邊框與陰影美化 */
+    iframe {
+        border-radius: 12px !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -139,36 +155,59 @@ with st.sidebar:
                 st.error(f"同步發生錯誤: {e}")
 
     # 顯示目前 API Key 狀態
-    st.caption(f"目前授權碼：`{CWA_API_KEY[:6]}...{CWA_API_KEY[-4:]}`")
+    st.caption(f"氣象署授權碼：`{CWA_API_KEY[:6]}...{CWA_API_KEY[-4:]}` (運作正常)")
+
+    st.markdown("---")
+    # 地圖風格切換 (海藍島綠)
+    st.subheader("🎨 地圖視覺風格")
+    map_theme = st.selectbox(
+        "選擇地圖底圖主題",
+        [
+            "🌿 微課程經典款 (海藍島綠 · 無浮水印)",
+            "🗺️ OpenStreetMap 開放地形圖",
+            "🛰️ 衛星遙測空照圖"
+        ],
+        index=0
+    )
 
     st.markdown("---")
     # 地區篩選器 (Step 13)
     available_regions = get_distinct_regions()
-    if not available_regions:
-        available_regions = ["北部地區", "中部地區", "南部地區", "東北部地區", "東部地區", "東南部地區"]
-
-    # 分組過濾：優先顯示 6 大分區，亦可選個別縣市
     main_regions = ["北部地區", "中部地區", "南部地區", "東北部地區", "東部地區", "東南部地區"]
     other_regions = [r for r in available_regions if r not in main_regions]
     
     st.subheader("📍 選擇分析地區")
-    region_type = st.radio("分區模式", ["6大主要預報區", "全台各縣市"], horizontal=True)
-    if region_type == "6大主要預報區":
-        selected_region = st.selectbox("地區選擇", [r for r in main_regions if r in available_regions], index=1)
+    
+    # 決定目前的選項清單與索引
+    current_reg = st.session_state["selected_region"]
+    if current_reg in main_regions:
+        curr_idx = main_regions.index(current_reg)
     else:
-        selected_region = st.selectbox("縣市選擇", other_regions if other_regions else available_regions)
+        curr_idx = 1
+        
+    selected_from_sidebar = st.selectbox(
+        "切換地區 (或直接點擊地圖)：",
+        main_regions,
+        index=curr_idx,
+        key="sidebar_region_select"
+    )
+    if selected_from_sidebar != st.session_state["selected_region"]:
+        st.session_state["selected_region"] = selected_from_sidebar
+        st.rerun()
 
     st.markdown("---")
-    st.info("💡 **開發者資訊**\n- 專案架構：Python + SQLite + Streamlit\n- 地圖引擎：Folium\n- 氣象來源：中央氣象署 (CWA)")
+    st.info("💡 **操作提示**\n- 點擊左側地圖任一區域即可直接切換！\n- 海洋以青藍著色，台灣主島以翡翠綠標示，完全無需第三方商業 API Key。")
 
 
 # ==========================================
 # 主畫面：頂部標題與 KPI 摘要 (Step 16 & 19)
 # ==========================================
+selected_region = st.session_state["selected_region"]
+
 st.markdown("""
 <div class="main-header">
-    <h1 style="margin: 0; font-size: 28px; font-weight: 700;">🌤️ 台灣一週天氣預報儀表板 (Taiwan Weather Forecast)</h1>
-    <p style="margin: 8px 0 0 0; opacity: 0.9; font-size: 15px;">
+    <h1 style="margin: 0; font-size: 26px; font-weight: 700;">🌤️ 台灣一週天氣預報儀表板 (Taiwan Weather Forecast)</h1>
+    <p style="margin: 8px 0 0 0; opacity: 0.9; font-size: 14px;">
         AI 創新微課程實作 · CWA API × JSON × Python × SQLite × Streamlit × Folium
     </p>
 </div>
@@ -204,7 +243,7 @@ else:
 col_map, col_charts = st.columns([1.1, 1], gap="large")
 
 # ------------------------------------------
-# 左欄：台灣地圖視覺化 (Folium + Streamlit)
+# 左欄：台灣地圖視覺化 (Folium + 藍海綠島風格)
 # ------------------------------------------
 with col_map:
     st.subheader("🗺️ 台灣氣溫互動地圖 (Folium)")
@@ -224,25 +263,75 @@ with col_map:
     df_date_forecast = get_forecast_by_date(selected_date)
     date_temp_dict = {row["regionName"]: (row["minT"], row["maxT"]) for _, row in df_date_forecast.iterrows()}
 
-    # 建立 Folium 地圖物件 (置中於台灣)
-    m = folium.Map(
-        location=[23.75, 120.95],
-        zoom_start=7.4,
-        tiles="CartoDB positron",
-        control_scale=True
-    )
+    # 建立 Folium 地圖物件 (置中於台灣，固定邊界防止隨意跑掉)
+    if "經典款" in map_theme:
+        # 海為天青藍色 (#a0c8f0)，完全無第三方 API Key 浮水印
+        m = folium.Map(
+            location=[23.75, 120.95],
+            zoom_start=7.4,
+            tiles=None,
+            min_zoom=6.8,
+            max_zoom=10,
+            control_scale=True
+        )
+        # 注入 CSS：海是藍色
+        m.get_root().header.add_child(folium.Element("""
+            <style>
+                .leaflet-container {
+                    background-color: #a2c4e6 !important;
+                }
+            </style>
+        """))
+    elif "OpenStreetMap" in map_theme:
+        m = folium.Map(
+            location=[23.75, 120.95],
+            zoom_start=7.4,
+            tiles="OpenStreetMap",
+            control_scale=True
+        )
+    else:
+        # 衛星地圖
+        m = folium.Map(
+            location=[23.75, 120.95],
+            zoom_start=7.4,
+            tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            attr="Esri World Imagery",
+            control_scale=True
+        )
 
-    # 根據微課程 Step 17 四級著色規則：
+    # 載入台灣外輪廓 GeoJSON，繪製翠綠色台灣島 (島是綠色)
+    geojson_path = os.path.join(current_dir, "data", "taiwan.geojson")
+    if os.path.exists(geojson_path):
+        with open(geojson_path, "r", encoding="utf-8") as gf:
+            taiwan_geojson = json.load(gf)
+
+        island_fill = "#48bb78" if "經典款" in map_theme else "none"
+        island_opacity = 0.9 if "經典款" in map_theme else 0.0
+        island_border = "#2f855a" if "經典款" in map_theme else "#2b6cb0"
+        
+        folium.GeoJson(
+            taiwan_geojson,
+            name="台灣本島",
+            style_function=lambda x: {
+                "fillColor": island_fill,
+                "color": island_border,
+                "weight": 2.2,
+                "fillOpacity": island_opacity
+            },
+            tooltip="台灣本島 (點擊圓點可查詢分區氣象)"
+        ).add_to(m)
+
+    # 根據微課程 Step 17 四級溫標著色規則：
     # 藍色: < 20°C | 綠色: 20-25°C | 黃色: 25-30°C | 紅色: > 30°C
     def get_temp_color(avg_t: float) -> str:
         if avg_t < 20.0:
-            return "#3b82f6"  # 藍色
+            return "#2563eb"  # 藍色 (低溫)
         elif avg_t <= 25.0:
-            return "#10b981"  # 綠色
+            return "#059669"  # 綠色 (舒適)
         elif avg_t <= 30.0:
-            return "#f59e0b"  # 黃色
+            return "#d97706"  # 黃色/橙色 (溫暖)
         else:
-            return "#ef4444"  # 紅色
+            return "#dc2626"  # 紅色 (高溫)
 
     # 在地圖上繪製 6 大主要預報分區標記
     for reg_key, info in REGION_COORDINATES.items():
@@ -251,49 +340,109 @@ with col_map:
             avg_t = round((min_t + max_t) / 2, 1)
             marker_color = get_temp_color(avg_t)
 
+            is_active = (reg_key == selected_region)
+            
+            # 若為當前選取的地區，加繪一層醒目的金色/深藍光環外圈
+            if is_active:
+                folium.CircleMarker(
+                    location=[info["lat"], info["lon"]],
+                    radius=28,
+                    color="#f59e0b",
+                    fill=True,
+                    fill_color="#fef3c7",
+                    fill_opacity=0.6,
+                    weight=4,
+                    tooltip=f"🎯 目前已選中：{reg_key}"
+                ).add_to(m)
+
             popup_html = f"""
-            <div style="font-family: sans-serif; min-width: 140px; padding: 4px;">
-                <h4 style="margin: 0 0 6px 0; color: #1e3c72; border-bottom: 2px solid {marker_color};">{reg_key}</h4>
+            <div style="font-family: sans-serif; min-width: 150px; padding: 6px;">
+                <h4 style="margin: 0 0 6px 0; color: #1e3c72; border-bottom: 2px solid {marker_color};">📍 {reg_key}</h4>
                 <p style="margin: 3px 0;"><b>預報日期：</b>{selected_date}</p>
-                <p style="margin: 3px 0;"><b>最高氣溫：</b><span style="color:#ef4444; font-weight:bold;">{max_t} °C</span></p>
-                <p style="margin: 3px 0;"><b>最低氣溫：</b><span style="color:#3b82f6; font-weight:bold;">{min_t} °C</span></p>
+                <p style="margin: 3px 0;"><b>最高氣溫：</b><span style="color:#dc2626; font-weight:bold;">{max_t} °C</span></p>
+                <p style="margin: 3px 0;"><b>最低氣溫：</b><span style="color:#2563eb; font-weight:bold;">{min_t} °C</span></p>
                 <p style="margin: 3px 0;"><b>平均氣溫：</b>{avg_t} °C</p>
+                <div style="margin-top: 8px; font-size: 11px; color: #475569;">👉 點擊即可連動右側詳細氣象圖表</div>
             </div>
             """
 
-            tooltip_text = f"{reg_key}：{min_t}°C ~ {max_t}°C (均溫 {avg_t}°C)"
+            tooltip_text = f"【點擊查看】{reg_key}：{min_t}°C ~ {max_t}°C (均溫 {avg_t}°C)"
 
-            # 繪製半徑圓形標記
+            # 主氣溫氣泡 (半徑 20)
             folium.CircleMarker(
                 location=[info["lat"], info["lon"]],
-                radius=18,
-                color=marker_color,
+                radius=21,
+                color="#ffffff",
                 fill=True,
                 fill_color=marker_color,
-                fill_opacity=0.85,
+                fill_opacity=0.92,
                 weight=3,
                 tooltip=tooltip_text,
-                popup=folium.Popup(popup_html, max_width=250)
+                popup=folium.Popup(popup_html, max_width=260)
             ).add_to(m)
 
-            # 在圓圈中央添加文字標記
+            # 在圓圈中央顯示溫度數字
             folium.map.Marker(
                 [info["lat"], info["lon"]],
                 icon=folium.DivIcon(
-                    html=f"""<div style="font-size: 11px; font-weight: bold; color: #ffffff; text-align: center; width: 36px; margin-left: -18px; margin-top: -8px; pointer-events: none;">{avg_t}°</div>"""
+                    html=f"""<div style="font-size: 12px; font-weight: 800; color: #ffffff; text-shadow: 0 1px 3px rgba(0,0,0,0.5); text-align: center; width: 40px; margin-left: -20px; margin-top: -9px; pointer-events: none;">{avg_t}°</div>"""
                 )
             ).add_to(m)
 
-    # 渲染 Folium 地圖至 Streamlit
-    st_folium(m, width=540, height=430)
+    # 渲染 Folium 地圖，並監聽使用者在地圖上的點擊事件 (互動連動功能)
+    map_output = st_folium(
+        m, 
+        width=540, 
+        height=450,
+        key="weather_interactive_map",
+        returned_objects=["last_clicked"]
+    )
 
-    # 顯示 Step 17 的四級溫標圖例 (Legend)
+    # 檢查使用者是否點擊了地圖，並自動計算最近的分區進行切換
+    if map_output and map_output.get("last_clicked"):
+        click_coord = map_output["last_clicked"]
+        # 若是新的點擊
+        if click_coord != st.session_state["last_map_click"]:
+            st.session_state["last_map_click"] = click_coord
+            c_lat = click_coord["lat"]
+            c_lon = click_coord["lng"]
+            
+            # 計算與 6 大分區中心的距離
+            nearest_reg = None
+            min_dist = float("inf")
+            for r_name, r_info in REGION_COORDINATES.items():
+                dist = ((c_lat - r_info["lat"])**2 + (c_lon - r_info["lon"])**2)**0.5
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest_reg = r_name
+            
+            # 點擊在台灣範圍內 (距離小於 2.2 度)
+            if nearest_reg and min_dist < 2.2:
+                if nearest_reg != st.session_state["selected_region"]:
+                    st.session_state["selected_region"] = nearest_reg
+                    st.rerun()
+
+    # 顯示目前選中提示與微課程四級溫標圖例 (Step 17 Legend)
+    st.markdown(f"""
+    <div style="margin-top: 6px;">
+        <span class="active-badge">🎯 目前已鎖定地區：<b>{selected_region}</b> (點擊地圖其他分區圓點即可切換)</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 快速切換按鈕列 (提升使用者體驗)
+    btn_cols = st.columns(6)
+    for idx, (b_name, b_col) in enumerate(zip(main_regions, btn_cols)):
+        with b_col:
+            if st.button(b_name.replace("地區", ""), key=f"quick_btn_{idx}", use_container_width=True):
+                st.session_state["selected_region"] = b_name
+                st.rerun()
+
     st.markdown("""
     <div class="legend-box">
-        <div class="legend-item"><span class="legend-dot" style="background:#3b82f6;"></span> &lt; 20°C (低溫)</div>
-        <div class="legend-item"><span class="legend-dot" style="background:#10b981;"></span> 20 - 25°C (舒適)</div>
-        <div class="legend-item"><span class="legend-dot" style="background:#f59e0b;"></span> 25 - 30°C (溫暖)</div>
-        <div class="legend-item"><span class="legend-dot" style="background:#ef4444;"></span> &gt; 30°C (高溫)</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#2563eb;"></span> &lt; 20°C (低溫)</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#059669;"></span> 20 - 25°C (舒適)</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#d97706;"></span> 25 - 30°C (溫暖)</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#dc2626;"></span> &gt; 30°C (高溫)</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -330,7 +479,7 @@ with col_charts:
             tooltip=["dataDate", "溫度類型", "氣溫"]
         )
 
-        points = alt.Chart(df_melted).mark_circle(size=70, opacity=1).encode(
+        points = alt.Chart(df_melted).mark_circle(size=80, opacity=1).encode(
             x=alt.X("dataDate:N"),
             y=alt.Y("氣溫:Q"),
             color=alt.Color("溫度類型:N", scale=color_scale),
