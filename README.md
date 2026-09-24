@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ### 🌐 線上即時體驗網址 (Live Demo Website)
-👉 **[https://0116c003-hw-taiwan-weather.streamlit.app/](https://share.streamlit.io/)** *(可透過 Streamlit Community Cloud 一鍵部署永久上線)*
+👉 **[https://0116c003-hw-taiwan-weather.streamlit.app/]([https://share.streamlit.io/](https://hw-taiwan-weather.streamlit.app/))** *(可透過 Streamlit Community Cloud 一鍵部署永久上線)*
 
 - 💻 **GitHub 原始碼儲存庫**：[https://github.com/0116c003/HW_TAIWAN_WEATHER](https://github.com/0116c003/HW_TAIWAN_WEATHER)
 
