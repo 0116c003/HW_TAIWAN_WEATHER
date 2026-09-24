@@ -76,10 +76,10 @@ if "selected_region" not in st.session_state:
     st.session_state["selected_region"] = "臺北市"
 if "last_map_click" not in st.session_state:
     st.session_state["last_map_click"] = None
+if "last_obj_click" not in st.session_state:
+    st.session_state["last_obj_click"] = None
 if "time_index" not in st.session_state:
     st.session_state["time_index"] = 0
-if "is_playing" not in st.session_state:
-    st.session_state["is_playing"] = False
 
 # GeoJSON 縣市名稱英漢對照表
 COUNTY_NAME_MAPPING = {
@@ -269,25 +269,8 @@ with st.sidebar:
     st.caption(f"氣象署授權碼：`{CWA_API_KEY[:6]}...{CWA_API_KEY[-4:]}`")
 
     st.markdown("---")
-    # 城市切換下拉選單
-    available_regions = get_distinct_regions()
-    county_list = [c for c in COUNTY_NAME_MAPPING.values() if c in available_regions]
-    six_regions = ["北部地區", "中部地區", "南部地區", "東北部地區", "東部地區", "東南部地區"]
-    all_options = county_list + [r for r in six_regions if r in available_regions]
-
-    st.subheader("📍 當前選取城市/地區")
-    current_selected = st.session_state["selected_region"]
-    default_idx = all_options.index(current_selected) if current_selected in all_options else 0
-
-    selected_from_dropdown = st.selectbox(
-        "切換城市 (或直接在地圖上點擊)：",
-        all_options,
-        index=default_idx,
-        key="dropdown_region"
-    )
-    if selected_from_dropdown != st.session_state["selected_region"]:
-        st.session_state["selected_region"] = selected_from_dropdown
-        st.rerun()
+    st.subheader("👆 互動模式說明")
+    st.info("🗺️ **純地圖點擊切換**：\n在衛星地圖上**直接點擊任何一個縣市**，右側即刻切換為該城市的專屬氣象預報與折線圖！")
 
     st.markdown("---")
     # 網站上線說明專區 (針對使用者的詢問)
@@ -357,39 +340,24 @@ with col_map:
     if not all_hourly_times:
         all_hourly_times = [datetime.now().strftime("%Y-%m-%d %H:00")]
 
-    # 時間軸控制列
+    # 手動絲滑時間軸控制列 (純手動拖拉切換)
     st.markdown("<div class='timeline-card'>", unsafe_allow_html=True)
-    
-    # 播放控制按鈕列
-    c_ctrl1, c_ctrl2, c_ctrl3, c_ctrl4 = st.columns([1.2, 1.2, 1.5, 3.2])
-    with c_ctrl1:
-        if st.button("⏮️ 前一小時", use_container_width=True):
-            if st.session_state["time_index"] > 0:
-                st.session_state["time_index"] -= 1
-                st.rerun()
-    with c_ctrl2:
-        if st.button("⏭️ 下一小時", use_container_width=True):
-            if st.session_state["time_index"] < len(all_hourly_times) - 1:
-                st.session_state["time_index"] += 1
-                st.rerun()
-    with c_ctrl3:
-        play_label = "⏸️ 暫停播放" if st.session_state["is_playing"] else "▶️ 自動播放"
-        if st.button(play_label, use_container_width=True):
-            st.session_state["is_playing"] = not st.session_state["is_playing"]
-            st.rerun()
-    with c_ctrl4:
-        # 當前時間點標籤
-        current_idx = min(st.session_state["time_index"], len(all_hourly_times) - 1)
-        cur_t_str = all_hourly_times[current_idx]
-        st.markdown(f"**⏰ 當前預報時點：** `{cur_t_str}`")
+    current_idx = min(st.session_state["time_index"], len(all_hourly_times) - 1)
+    cur_t_str = all_hourly_times[current_idx]
 
-    # 絲滑滑桿：使用 select_slider 直觀拖動精細時間刻度
+    col_t_title, col_t_val = st.columns([1, 1])
+    with col_t_title:
+        st.markdown("<b style='font-size:15px; color:#1e293b;'>🎚️ 手動拖動時間軸（逐小時切換）：</b>", unsafe_allow_html=True)
+    with col_t_val:
+        st.markdown(f"<div style='text-align:right; font-weight:700; color:#0284c7; font-size:15px;'>⏰ 預報時段：{cur_t_str}</div>", unsafe_allow_html=True)
+
     selected_time_val = st.select_slider(
-        "🎚️ 拖動時間軸（逐小時絲滑切換）：",
+        "時間軸滑桿",
         options=all_hourly_times,
         value=cur_t_str,
         format_func=lambda t: f"{t[5:7]}/{t[8:10]} {t[11:16]}",
-        key="hourly_select_slider"
+        label_visibility="collapsed",
+        key="hourly_timeline_select_slider"
     )
 
     new_time_idx = all_hourly_times.index(selected_time_val)
@@ -398,15 +366,6 @@ with col_map:
         st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
-
-    # 若處於播放狀態，自動向前推進一格
-    if st.session_state["is_playing"]:
-        time.sleep(1.0)
-        if st.session_state["time_index"] < len(all_hourly_times) - 1:
-            st.session_state["time_index"] += 1
-        else:
-            st.session_state["time_index"] = 0
-        st.rerun()
 
     selected_time = all_hourly_times[st.session_state["time_index"]]
 
@@ -515,43 +474,44 @@ with col_map:
             tooltip=f"🎯 目前鎖定分析：{selected_region}"
         ).add_to(m)
 
-    # 渲染 Folium 地圖並監聽點擊
+    # 渲染 Folium 地圖並監聽使用者點擊 (使用穩定 key 避免時間軸拖動時重新掛載)
     map_output = st_folium(
         m, 
         width=540, 
-        height=450,
-        key=f"sat_map_{st.session_state['time_index']}",
-        returned_objects=["last_clicked"]
+        height=460,
+        key="taiwan_sat_interactive_map",
+        returned_objects=["last_clicked", "last_object_clicked"]
     )
 
-    # 點擊地圖切換城市
-    if map_output and map_output.get("last_clicked"):
-        click_coord = map_output["last_clicked"]
-        if click_coord != st.session_state["last_map_click"]:
+    # 點擊地圖即時切換城市邏輯
+    clicked_county = None
+    if map_output:
+        # 1. 優先檢查 GeoJson 縣市物件點擊
+        obj_clicked = map_output.get("last_object_clicked")
+        if obj_clicked and obj_clicked != st.session_state.get("last_obj_click") and isinstance(obj_clicked, dict):
+            st.session_state["last_obj_click"] = obj_clicked
+            props = obj_clicked.get("properties", {})
+            if props.get("city_name"):
+                clicked_county = props["city_name"]
+
+        # 2. 檢查地圖點擊座標 (Ray-Casting 多邊形包含測試與重心就近匹配)
+        click_coord = map_output.get("last_clicked")
+        if click_coord and click_coord != st.session_state.get("last_map_click") and not clicked_county:
             st.session_state["last_map_click"] = click_coord
             c_lat = click_coord["lat"]
             c_lon = click_coord["lng"]
-            
             clicked_county = identify_clicked_county(c_lat, c_lon, counties_data["features"])
-            if clicked_county and clicked_county != st.session_state["selected_region"]:
-                st.session_state["selected_region"] = clicked_county
-                st.rerun()
 
-    # 顯示目前鎖定狀態
+    if clicked_county and clicked_county != st.session_state["selected_region"]:
+        st.session_state["selected_region"] = clicked_county
+        st.rerun()
+
+    # 顯示目前地圖鎖定狀態
     st.markdown(f"""
     <div style="margin-top: 6px;">
-        <span class="active-badge">🎯 目前分析城市：<b>{selected_region}</b>（可滑鼠懸停看即時氣象，點擊切換城市）</span>
+        <span class="active-badge">🎯 目前顯示城市：<b>{selected_region}</b>（在地圖上點擊任一縣市即可直接切換）</span>
     </div>
     """, unsafe_allow_html=True)
-
-    # 快速都會列
-    quick_cities = ["臺北市", "新北市", "桃園市", "臺中市", "臺南市", "高雄市"]
-    btn_cols = st.columns(6)
-    for idx, (b_name, b_col) in enumerate(zip(quick_cities, btn_cols)):
-        with b_col:
-            if st.button(b_name.replace("市", ""), key=f"qcity_{idx}", use_container_width=True):
-                st.session_state["selected_region"] = b_name
-                st.rerun()
 
     # 圖例
     st.markdown("""
